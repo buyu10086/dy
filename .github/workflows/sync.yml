@@ -1,41 +1,35 @@
-name: Sync YSC JSON
+name: 每日自动解密
+
 on:
-  # 定时触发：每天UTC时间0点（对应北京时间8点）
+  push:
+    branches: [ main ]
   schedule:
+    # 每天 UTC 0点（北京时间8点）自动运行
     - cron: '0 0 * * *'
-  # 手动触发（可选，方便测试）
-  workflow_dispatch:
+  workflow_dispatch:  # 支持手动点击运行
 
 jobs:
-  sync:
+  build:
     runs-on: ubuntu-latest
     steps:
-      # 1. 克隆GitHub仓库到运行环境
-      - name: Checkout repo
+      - name: 拉取代码
         uses: actions/checkout@v4
-        with:
-          # 确保能推送到仓库（需要GitHub Token）
-          persist-credentials: false
 
-      # 2. 安装Python依赖（requests）
-      - name: Set up Python
+      - name: 设置Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - name: Install dependencies
-        run: pip install requests
 
-      # 3. 执行Python脚本，抓取并保存JSON
-      - name: Run sync script
-        run: python sync_json.py
+      - name: 安装依赖
+        run: pip install urllib3
 
-      # 4. 提交并推送更新到GitHub仓库
-      - name: Commit and push changes
-        uses: actions-js/push@master
-        with:
-          # 提交信息（包含时间）
-          message: 'Auto sync YSC JSON: ${{ github.event.head_commit.timestamp }}'
-          # GitHub Token（自动生成，无需手动配置）
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          # 推送到主分支（根据仓库分支名调整，如main/master）
-          branch: main
+      - name: 执行解密脚本
+        run: python decode.py
+
+      - name: 提交结果到GitHub
+        run: |
+          git config --global user.name "AutoBot"
+          git config --global user.email "bot@github.com"
+          git add decoded_result.txt
+          git commit -m "✅ 每日自动更新解密结果 $(date +'%Y-%m-%d')"
+          git push
