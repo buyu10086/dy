@@ -5,6 +5,21 @@ import re
 import sys
 import urllib.parse
 
+def install_demjson():
+    """自动安装demjson3库"""
+    try:
+        import demjson3
+        return True
+    except ImportError:
+        import subprocess
+        import pip
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "demjson3"])
+        return True
+
+# 安装并导入demjson
+install_demjson()
+import demjson3
+
 def create_session():
     session = requests.Session()
     session.headers.update({
@@ -23,8 +38,6 @@ def clean_text(text):
     text = re.sub(r'<[^>]+>', '', text)
     # 去除多余空格、换行和制表符
     text = re.sub(r'\s+', '', text)
-    # 去除非ASCII字符（避免Base64解码失败）
-    text = re.sub(r'[^\x00-\x7F]+', '', text)
     return text
 
 def decode_url_safe_base64(s):
@@ -52,45 +65,31 @@ def try_all_decoders(text):
             result = decoder(text)
             if result:
                 print(f"✅ 尝试 {name} 成功")
-                # 保存解码后的文本，方便调试
-                with open(f"debug_decoded_{name}.txt", "w", encoding="utf-8") as f:
-                    f.write(result)
                 return result
         except Exception as e:
-            print(f"❌ 尝试 {name} 失败: {e}")
             continue
     return None
 
-def fix_json_format(json_str):
-    """彻底修复不规范JSON格式"""
-    # 1. 去除JSON前后的非JSON字符（包括换行、空格、非ASCII）
-    json_str = re.sub(r'^[^{]*', '', json_str)
-    json_str = re.sub(r'[^}]*$', '', json_str)
-    
-    # 2. 单引号转双引号（处理所有未转义的单引号）
-    json_str = re.sub(r"(?<!\\)'", '"', json_str)
-    
-    # 3. 修复末尾多余的逗号
-    json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
-    
-    # 4. 修复不规范的转义（比如多个反斜杠）
-    json_str = json_str.replace('\\\\', '\\')
-    
-    # 5. 修复不规范的数字/字符串格式（比如key没有引号）
-    json_str = re.sub(r'(\w+)\s*:', r'"\1":', json_str)
-    
-    return json_str
-
-def extract_json(text):
-    """从文本中提取并修复JSON片段"""
-    # 匹配最外层的{}结构（尽可能匹配最大的JSON对象）
+def extract_and_parse_json(text):
+    """从文本中提取并解析JSON，支持不规范格式"""
+    # 1. 先匹配所有可能的JSON片段
     matches = re.findall(r'(\{.*\})', text, re.DOTALL)
-    if matches:
-        # 取最长的那个JSON片段（大概率是完整配置）
-        longest_json = max(matches, key=len)
-        # 修复不规范的JSON格式
-        fixed_json = fix_json_format(longest_json)
-        return fixed_json
+    if not matches:
+        print("❌ 未找到JSON片段")
+        return None
+
+    # 2. 尝试解析每个JSON片段（优先最长的）
+    for json_str in sorted(matches, key=len, reverse=True):
+        try:
+            # 使用demjson解析不规范JSON
+            config = demjson3.decode(json_str)
+            if isinstance(config, dict) and "sites" in config:
+                print("✅ 成功解析不规范JSON")
+                return config
+        except Exception as e:
+            continue
+
+    print("❌ 所有JSON片段解析失败")
     return None
 
 def decrypt_config(raw_text):
@@ -103,8 +102,6 @@ def decrypt_config(raw_text):
         # 2. 清洗文本
         cleaned = clean_text(raw_text)
         print(f"ℹ️ 清洗后文本长度: {len(cleaned)}")
-        with open("debug_cleaned.txt", "w", encoding="utf-8") as f:
-            f.write(cleaned)
 
         # 3. 尝试所有解码方式
         decoded = try_all_decoders(cleaned)
@@ -112,22 +109,9 @@ def decrypt_config(raw_text):
             print("❌ 所有解码方式都失败")
             return None
 
-        # 4. 从解码结果中提取并修复JSON
-        json_str = extract_json(decoded)
-        if not json_str:
-            print("❌ 未找到JSON片段")
-            return None
-        print("ℹ️ 已提取并修复JSON片段")
-        with open("debug_fixed_json.txt", "w", encoding="utf-8") as f:
-            f.write(json_str)
-
-        # 5. 解析修复后的JSON
-        config = json.loads(json_str)
-        if "sites" in config:
-            return config
-        else:
-            print("❌ JSON中没有sites字段")
-            return None
+        # 4. 提取并解析JSON
+        config = extract_and_parse_json(decoded)
+        return config
 
     except Exception as e:
         print(f"❌ 解密过程出错: {e}")
@@ -170,7 +154,7 @@ def main():
             json.dump(final_config, f, ensure_ascii=False, indent=2)
         print("\n🎉 已成功写入fy.json")
     else:
-        print("\n❌ 所有链接解密失败，请检查仓库中的debug_*.txt文件")
+        print("\n❌ 所有链接解密失败，请检查debug_original.txt文件")
         sys.exit(1)
 
 if __name__ == "__main__":
