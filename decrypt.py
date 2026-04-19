@@ -3,73 +3,99 @@ import base64
 import json
 import re
 import sys
+import urllib.parse
 
-# 1. 创建带请求头的会话，模拟浏览器
 def create_session():
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
         "Connection": "keep-alive"
     })
     return session
 
-# 2. 清洗文本：去除HTML标签、多余字符
 def clean_text(text):
-    # 去除HTML标签
+    # 去除HTML标签、多余空格和非ASCII字符
     text = re.sub(r'<[^>]+>', '', text)
-    # 去除多余空格、换行、制表符
     text = re.sub(r'\s+', '', text)
-    # 去除非ASCII字符（避免Base64解密失败）
     text = re.sub(r'[^\x00-\x7F]+', '', text)
     return text
 
-# 3. 通用影视仓接口解密（支持多种加密方式）
-def decrypt_config(text):
+def decode_url_safe_base64(s):
+    # 处理URL安全的Base64
+    s = s.replace('-', '+').replace('_', '/')
+    s += '=' * ((4 - len(s) % 4) % 4)
     try:
-        print("ℹ️ 开始解密流程...")
-        # 步骤1：清洗文本
-        raw = clean_text(text)
-        print(f"ℹ️ 清洗后文本长度: {len(raw)}")
+        return base64.b64decode(s).decode("utf-8")
+    except:
+        return None
 
-        # 步骤2：尝试多种Base64解密（含填充处理）
-        decrypted = None
-        base64_candidates = [
-            raw,
-            raw + '=' * ((4 - len(raw) % 4) % 4),  # 补全Base64填充符
-            raw.replace('-', '+').replace('_', '/')  # URL安全Base64
-        ]
+def try_all_decoders(text):
+    """尝试所有可能的解码方式"""
+    decoders = [
+        ("原始文本", lambda t: t),
+        ("URL解码", lambda t: urllib.parse.unquote(t)),
+        ("URL解码两次", lambda t: urllib.parse.unquote(urllib.parse.unquote(t))),
+        ("Base64", lambda t: base64.b64decode(t).decode("utf-8") if len(t) > 0 else None),
+        ("URL安全Base64", decode_url_safe_base64),
+        ("Base64+URL解码", lambda t: base64.b64decode(urllib.parse.unquote(t)).decode("utf-8") if len(t) > 0 else None),
+    ]
 
-        for candidate in base64_candidates:
-            try:
-                decrypted = base64.b64decode(candidate).decode("utf-8")
-                print("✅ Base64解密成功")
-                break
-            except Exception as e:
-                continue
+    for name, decoder in decoders:
+        try:
+            result = decoder(text)
+            if result:
+                print(f"✅ 尝试 {name} 成功")
+                return result
+        except Exception as e:
+            continue
+    return None
 
-        # 如果Base64解密失败，直接使用清洗后的文本
-        if not decrypted:
-            print("ℹ️ 不是Base64加密，使用清洗后的文本直接解析")
-            decrypted = raw
+def extract_json(text):
+    """从文本中提取JSON片段"""
+    # 匹配最外层的{}结构
+    match = re.search(r'(\{.*\})', text, re.DOTALL)
+    if match:
+        return match.group(1)
+    return None
 
-        # 步骤3：提取JSON片段（适配各种不规范格式）
-        json_match = re.search(r"(\{.*\})", decrypted, re.DOTALL)
-        if json_match:
-            config_json = json_match.group(1)
-            print("✅ 成功提取JSON片段")
-            return json.loads(config_json)
+def decrypt_config(raw_text):
+    try:
+        # 1. 保存原始内容到调试文件
+        with open("debug_original.txt", "w", encoding="utf-8") as f:
+            f.write(raw_text)
+        print("ℹ️ 已保存原始响应到 debug_original.txt")
 
-        # 直接解析整个文本
-        return json.loads(decrypted)
+        # 2. 清洗文本
+        cleaned = clean_text(raw_text)
+        print(f"ℹ️ 清洗后文本长度: {len(cleaned)}")
+
+        # 3. 尝试所有解码方式
+        decoded = try_all_decoders(cleaned)
+        if not decoded:
+            print("❌ 所有解码方式都失败")
+            return None
+
+        # 4. 从解码结果中提取JSON
+        json_str = extract_json(decoded)
+        if not json_str:
+            print("❌ 未找到JSON片段")
+            return None
+
+        # 5. 解析JSON
+        config = json.loads(json_str)
+        if "sites" in config:
+            return config
+        else:
+            print("❌ JSON中没有sites字段")
+            return None
 
     except Exception as e:
-        print(f"❌ 解析JSON失败: {e}")
+        print(f"❌ 解密过程出错: {e}")
         return None
 
 def main():
-    # 读取wy.txt中的链接
     try:
         with open("wy.txt", "r", encoding="utf-8") as f:
             urls = [line.strip() for line in f if line.strip()]
@@ -88,30 +114,25 @@ def main():
     for url in urls:
         print(f"\n🔗 正在请求: {url}")
         try:
-            # 增加超时和重定向处理
             resp = session.get(url, timeout=30, allow_redirects=True)
             resp.raise_for_status()
             print(f"✅ 请求成功，状态码: {resp.status_code}")
             print(f"ℹ️ 响应原始长度: {len(resp.text)}")
 
-            # 解密
             config = decrypt_config(resp.text)
-            if config and "sites" in config:
+            if config:
                 final_config = config
-                print("✅ 解密成功，找到有效sites字段")
+                print("✅ 解密成功！")
                 break
-            else:
-                print("❌ 解密后未找到有效sites字段")
         except Exception as e:
             print(f"❌ 请求失败: {type(e).__name__}: {e}")
 
-    # 写入fy.json
     if final_config:
         with open("fy.json", "w", encoding="utf-8") as f:
             json.dump(final_config, f, ensure_ascii=False, indent=2)
         print("\n🎉 已成功写入fy.json")
     else:
-        print("\n❌ 所有链接解密失败，任务退出")
+        print("\n❌ 所有链接解密失败，请检查debug_original.txt和wy.txt中的链接")
         sys.exit(1)
 
 if __name__ == "__main__":
