@@ -1,0 +1,41 @@
+name: Sync YSC JSON
+on:
+  # 定时触发：每天UTC时间0点（对应北京时间8点）
+  schedule:
+    - cron: '0 0 * * *'
+  # 手动触发（可选，方便测试）
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 克隆GitHub仓库到运行环境
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          # 确保能推送到仓库（需要GitHub Token）
+          persist-credentials: false
+
+      # 2. 安装Python依赖（requests）
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: pip install requests
+
+      # 3. 执行Python脚本，抓取并保存JSON
+      - name: Run sync script
+        run: python sync_json.py
+
+      # 4. 提交并推送更新到GitHub仓库
+      - name: Commit and push changes
+        uses: actions-js/push@master
+        with:
+          # 提交信息（包含时间）
+          message: 'Auto sync YSC JSON: ${{ github.event.head_commit.timestamp }}'
+          # GitHub Token（自动生成，无需手动配置）
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # 推送到主分支（根据仓库分支名调整，如main/master）
+          branch: main
