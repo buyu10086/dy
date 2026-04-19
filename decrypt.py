@@ -52,32 +52,44 @@ def try_all_decoders(text):
             result = decoder(text)
             if result:
                 print(f"✅ 尝试 {name} 成功")
+                # 保存解码后的文本，方便调试
+                with open(f"debug_decoded_{name}.txt", "w", encoding="utf-8") as f:
+                    f.write(result)
                 return result
         except Exception as e:
+            print(f"❌ 尝试 {name} 失败: {e}")
             continue
     return None
 
 def fix_json_format(json_str):
-    """修复常见的不规范JSON格式"""
-    # 1. 单引号转双引号
-    json_str = re.sub(r"(?<!\\)'", '"', json_str)
-    # 2. 去除JSON前后多余的非JSON字符
+    """彻底修复不规范JSON格式"""
+    # 1. 去除JSON前后的非JSON字符（包括换行、空格、非ASCII）
     json_str = re.sub(r'^[^{]*', '', json_str)
     json_str = re.sub(r'[^}]*$', '', json_str)
-    # 3. 去除末尾多余的逗号
+    
+    # 2. 单引号转双引号（处理所有未转义的单引号）
+    json_str = re.sub(r"(?<!\\)'", '"', json_str)
+    
+    # 3. 修复末尾多余的逗号
     json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
-    # 4. 修复不规范的转义
+    
+    # 4. 修复不规范的转义（比如多个反斜杠）
     json_str = json_str.replace('\\\\', '\\')
+    
+    # 5. 修复不规范的数字/字符串格式（比如key没有引号）
+    json_str = re.sub(r'(\w+)\s*:', r'"\1":', json_str)
+    
     return json_str
 
 def extract_json(text):
     """从文本中提取并修复JSON片段"""
-    # 匹配最外层的{}结构
-    match = re.search(r'(\{.*\})', text, re.DOTALL)
-    if match:
-        json_str = match.group(1)
+    # 匹配最外层的{}结构（尽可能匹配最大的JSON对象）
+    matches = re.findall(r'(\{.*\})', text, re.DOTALL)
+    if matches:
+        # 取最长的那个JSON片段（大概率是完整配置）
+        longest_json = max(matches, key=len)
         # 修复不规范的JSON格式
-        fixed_json = fix_json_format(json_str)
+        fixed_json = fix_json_format(longest_json)
         return fixed_json
     return None
 
@@ -91,6 +103,8 @@ def decrypt_config(raw_text):
         # 2. 清洗文本
         cleaned = clean_text(raw_text)
         print(f"ℹ️ 清洗后文本长度: {len(cleaned)}")
+        with open("debug_cleaned.txt", "w", encoding="utf-8") as f:
+            f.write(cleaned)
 
         # 3. 尝试所有解码方式
         decoded = try_all_decoders(cleaned)
@@ -103,6 +117,9 @@ def decrypt_config(raw_text):
         if not json_str:
             print("❌ 未找到JSON片段")
             return None
+        print("ℹ️ 已提取并修复JSON片段")
+        with open("debug_fixed_json.txt", "w", encoding="utf-8") as f:
+            f.write(json_str)
 
         # 5. 解析修复后的JSON
         config = json.loads(json_str)
@@ -153,7 +170,7 @@ def main():
             json.dump(final_config, f, ensure_ascii=False, indent=2)
         print("\n🎉 已成功写入fy.json")
     else:
-        print("\n❌ 所有链接解密失败，请检查debug_original.txt和wy.txt中的链接")
+        print("\n❌ 所有链接解密失败，请检查仓库中的debug_*.txt文件")
         sys.exit(1)
 
 if __name__ == "__main__":
