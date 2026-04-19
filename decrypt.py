@@ -16,14 +16,19 @@ def create_session():
     return session
 
 def clean_text(text):
-    # 去除HTML标签、多余空格和非ASCII字符
+    """清洗文本，去除HTML标签、多余空格和BOM头"""
+    # 去除UTF-8 BOM头
+    text = text.lstrip('\ufeff')
+    # 去除HTML标签
     text = re.sub(r'<[^>]+>', '', text)
+    # 去除多余空格、换行和制表符
     text = re.sub(r'\s+', '', text)
+    # 去除非ASCII字符（避免Base64解码失败）
     text = re.sub(r'[^\x00-\x7F]+', '', text)
     return text
 
 def decode_url_safe_base64(s):
-    # 处理URL安全的Base64
+    """处理URL安全的Base64"""
     s = s.replace('-', '+').replace('_', '/')
     s += '=' * ((4 - len(s) % 4) % 4)
     try:
@@ -52,12 +57,28 @@ def try_all_decoders(text):
             continue
     return None
 
+def fix_json_format(json_str):
+    """修复常见的不规范JSON格式"""
+    # 1. 单引号转双引号
+    json_str = re.sub(r"(?<!\\)'", '"', json_str)
+    # 2. 去除JSON前后多余的非JSON字符
+    json_str = re.sub(r'^[^{]*', '', json_str)
+    json_str = re.sub(r'[^}]*$', '', json_str)
+    # 3. 去除末尾多余的逗号
+    json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
+    # 4. 修复不规范的转义
+    json_str = json_str.replace('\\\\', '\\')
+    return json_str
+
 def extract_json(text):
-    """从文本中提取JSON片段"""
+    """从文本中提取并修复JSON片段"""
     # 匹配最外层的{}结构
     match = re.search(r'(\{.*\})', text, re.DOTALL)
     if match:
-        return match.group(1)
+        json_str = match.group(1)
+        # 修复不规范的JSON格式
+        fixed_json = fix_json_format(json_str)
+        return fixed_json
     return None
 
 def decrypt_config(raw_text):
@@ -77,13 +98,13 @@ def decrypt_config(raw_text):
             print("❌ 所有解码方式都失败")
             return None
 
-        # 4. 从解码结果中提取JSON
+        # 4. 从解码结果中提取并修复JSON
         json_str = extract_json(decoded)
         if not json_str:
             print("❌ 未找到JSON片段")
             return None
 
-        # 5. 解析JSON
+        # 5. 解析修复后的JSON
         config = json.loads(json_str)
         if "sites" in config:
             return config
