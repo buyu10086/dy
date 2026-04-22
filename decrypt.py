@@ -12,13 +12,81 @@ def install_demjson():
         return True
     except ImportError:
         import subprocess
-        import pip
         subprocess.check_call([sys.executable, "-m", "pip", "install", "demjson3"])
         return True
 
 # 安装并导入demjson
 install_demjson()
 import demjson3
+
+# 你提供的兜底配置（解密失败时使用）
+DEFAULT_CONFIG = {
+  "spider": "https://img2.gelonghui.com/library/9c8e4-b797010b-366e-48f9-86b6-16be897c90c2.png;md5;9c8e45f60d3d413d8b140ec21811deb0",
+  "wallpaper": "https://深色壁纸.xxooo.cf/",
+  "logo": "http://hello.xn--z7x900a.com/fm.gif",
+  "sites": [
+    {
+      "key": "豆瓣",
+      "name": "🐼┃公众号：肥猫宝贝┃",
+      "type": 3,
+      "api": "csp_Douban",
+      "searchable": 0
+    },
+    {
+      "key": "豆瓣预告",
+      "name": "🐼┃豆瓣┃预告",
+      "type": 3,
+      "api": "csp_YGP",
+      "playerType": 2,
+      "searchable": 0
+    },
+    {
+      "key": "config",
+      "name": "🐼┃配置┃中心",
+      "type": 3,
+      "api": "csp_Config",
+      "playerType": 2
+    },
+    {
+      "key": "living",
+      "name": "🐼┃游戏┃直播",
+      "type": 3,
+      "api": "csp_Living",
+      "playerType": 2,
+      "ext": "https://lemonlive-api-1.deno.dev"
+    }
+  ],
+  "parses": [
+    {
+      "name": "Json聚合",
+      "type": 3,
+      "url": "Demo"
+    },
+    {
+      "name": "Web聚合",
+      "type": 3,
+      "url": "Web"
+    }
+  ],
+  "doh": [
+    {
+      "name": "Google",
+      "url": "https://dns.google/dns-query",
+      "ips": [
+        "8.8.4.4",
+        "8.8.8.8"
+      ]
+    }
+  ],
+  "lives": [
+    {
+      "name": "Kimentanm",
+      "type": 0,
+      "url": "https://gh.llkk.cc/https://raw.githubusercontent.com/Kimentanm/aptv/master/m3u/iptv.m3u",
+      "playerType": 2
+    }
+  ]
+}
 
 def create_session():
     session = requests.Session()
@@ -32,11 +100,8 @@ def create_session():
 
 def clean_text(text):
     """清洗文本，去除HTML标签、多余空格和BOM头"""
-    # 去除UTF-8 BOM头
     text = text.lstrip('\ufeff')
-    # 去除HTML标签
     text = re.sub(r'<[^>]+>', '', text)
-    # 去除多余空格、换行和制表符
     text = re.sub(r'\s+', '', text)
     return text
 
@@ -72,16 +137,13 @@ def try_all_decoders(text):
 
 def extract_and_parse_json(text):
     """从文本中提取并解析JSON，支持不规范格式"""
-    # 1. 先匹配所有可能的JSON片段
     matches = re.findall(r'(\{.*\})', text, re.DOTALL)
     if not matches:
         print("❌ 未找到JSON片段")
         return None
 
-    # 2. 尝试解析每个JSON片段（优先最长的）
     for json_str in sorted(matches, key=len, reverse=True):
         try:
-            # 使用demjson解析不规范JSON
             config = demjson3.decode(json_str)
             if isinstance(config, dict) and "sites" in config:
                 print("✅ 成功解析不规范JSON")
@@ -94,22 +156,14 @@ def extract_and_parse_json(text):
 
 def decrypt_config(raw_text):
     try:
-        # 1. 保存原始内容到调试文件
-        with open("debug_original.txt", "w", encoding="utf-8") as f:
-            f.write(raw_text)
-        print("ℹ️ 已保存原始响应到 debug_original.txt")
-
-        # 2. 清洗文本
         cleaned = clean_text(raw_text)
         print(f"ℹ️ 清洗后文本长度: {len(cleaned)}")
 
-        # 3. 尝试所有解码方式
         decoded = try_all_decoders(cleaned)
         if not decoded:
             print("❌ 所有解码方式都失败")
             return None
 
-        # 4. 提取并解析JSON
         config = extract_and_parse_json(decoded)
         return config
 
@@ -118,21 +172,19 @@ def decrypt_config(raw_text):
         return None
 
 def main():
+    final_config = None
+    session = create_session()
+
+    # 读取wy.txt中的链接
     try:
         with open("wy.txt", "r", encoding="utf-8") as f:
             urls = [line.strip() for line in f if line.strip()]
         print(f"ℹ️ 从wy.txt读取到 {len(urls)} 个链接")
     except Exception as e:
         print(f"❌ 读取wy.txt失败: {e}")
-        sys.exit(1)
+        urls = []
 
-    if not urls:
-        print("❌ wy.txt中没有链接")
-        sys.exit(1)
-
-    session = create_session()
-    final_config = None
-
+    # 逐个请求并解密
     for url in urls:
         print(f"\n🔗 正在请求: {url}")
         try:
@@ -140,6 +192,10 @@ def main():
             resp.raise_for_status()
             print(f"✅ 请求成功，状态码: {resp.status_code}")
             print(f"ℹ️ 响应原始长度: {len(resp.text)}")
+
+            # 保存原始响应到调试文件
+            with open("debug_original.txt", "w", encoding="utf-8") as f:
+                f.write(resp.text)
 
             config = decrypt_config(resp.text)
             if config:
@@ -149,13 +205,15 @@ def main():
         except Exception as e:
             print(f"❌ 请求失败: {type(e).__name__}: {e}")
 
-    if final_config:
-        with open("fy.json", "w", encoding="utf-8") as f:
-            json.dump(final_config, f, ensure_ascii=False, indent=2)
-        print("\n🎉 已成功写入fy.json")
-    else:
-        print("\n❌ 所有链接解密失败，请检查debug_original.txt文件")
-        sys.exit(1)
+    # 如果所有链接都失败，使用兜底配置
+    if not final_config:
+        print("\n⚠️ 所有链接解密失败，使用兜底配置")
+        final_config = DEFAULT_CONFIG
+
+    # 写入fy.json（无论成功失败都写入，保证订阅可用）
+    with open("fy.json", "w", encoding="utf-8") as f:
+        json.dump(final_config, f, ensure_ascii=False, indent=2)
+    print("\n🎉 已成功写入fy.json")
 
 if __name__ == "__main__":
     main()
